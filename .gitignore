@@ -1,0 +1,8 @@
+dist/
+build/
+*.spec
+__pycache__/
+*.pyc
+efootball_log_*.csv
+efootball_log_*.xlsx
+efootball_storico_partite.xlsx
