@@ -19,7 +19,7 @@ della partita, come fa eFootball_Network_Monitor_Tool:
 
 Ogni intervallo (default 5 s) stampa una riga colorata.
 Premi Ctrl+C per fermare: stampa il riepilogo e crea il file Excel della sessione,
-piu' lo storico efootball_storico_partite.xlsx (con --sniff).
+piu' lo storico efootball_match_history.xlsx (con --sniff).
 
 Servono: pip install openpyxl (Excel) e, per --sniff, Npcap + pip install scapy.
 """
@@ -596,7 +596,7 @@ XLSX_THRESHOLDS = {
 }
 
 
-HISTORY_FILE = "efootball_storico_partite.xlsx"
+HISTORY_FILE = "efootball_match_history.xlsx"
 HISTORY_HEADER = ["Data", "Ora", "Server", "Tipo", "Dove", "Provider",
                   "Altra nazione", "Ping (ms)", "Connessione"]
 
