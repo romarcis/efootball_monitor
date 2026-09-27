@@ -1,11 +1,11 @@
 name: Build Windows exe
 
-# Builds eFootballMonitor.exe on Windows.
-# - Push a tag like v1.2.0 -> the exe is attached to a GitHub Release.
-# - "Run workflow" from the Actions tab -> the exe is available as a build artifact.
+# Builds eFootballMonitor.exe on Windows and publishes it as a new GitHub Release
+# every time the script changes on main (or when started by hand from the Actions tab).
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+    paths: ["efootball_monitor.py", ".github/workflows/build-exe.yml"]
   workflow_dispatch:
 
 permissions:
@@ -36,8 +36,11 @@ jobs:
           path: dist/eFootballMonitor.exe
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: eFootball Monitor v1.0.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
           files: dist/eFootballMonitor.exe
           generate_release_notes: true
+          make_latest: true
