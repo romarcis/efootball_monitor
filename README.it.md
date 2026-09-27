@@ -67,6 +67,7 @@ A fine partita il prompt scrive anche la pagella della partita.
 
 **Server dedicato** vuol dire che la partita passa da un server (per esempio Google Cloud a Milano). In questo caso l'IP dell'avversario non si vede, quindi la nazione indicata è quella del server.
 **P2P** vuol dire che sei collegato direttamente all'avversario, quindi la nazione è la sua.
+Nelle partite P2P l'avviso prova anche a capire il sistema dell'avversario dal TTL dei pacchetti: **probabile PC/Xbox** oppure **probabile PlayStation/mobile**. È solo un indizio: PC e Xbox sembrano uguali, PlayStation e telefoni pure, e alcuni router cambiano il valore.
 
 La nazione viene chiesta al servizio gratuito ip-api.com. Se hai Discord o altre chiamate aperte possono scattare avvisi falsi. Per togliere il suono aggiungi `--muto`.
 

@@ -352,6 +352,7 @@ class MatchSniffer:
         self.on_new_remote = on_new_remote
         self.burst = defaultdict(deque)
         self.last_seen = {}
+        self.ttl = {}                       # ultimo TTL ricevuto da ogni host
         self.lock = threading.Lock()
         self.rx = defaultdict(int)
         self.tx = defaultdict(int)
@@ -383,6 +384,7 @@ class MatchSniffer:
                     self.gaps[remote].append((now - last) * 1000)
                 self.last_rx[remote] = now
                 self.win_first.setdefault(remote, now)
+                self.ttl[remote] = ip.ttl
                 if self.on_new_remote and not ipaddress.ip_address(remote).is_private:
                     self._check_new(remote, rport, now)
             elif ip.src == self.my_ip:
@@ -402,8 +404,8 @@ class MatchSniffer:
             b.popleft()
         if len(b) >= 5:
             del self.burst[remote]
-            threading.Thread(target=self.on_new_remote, args=(remote, rport),
-                             daemon=True).start()
+            threading.Thread(target=self.on_new_remote,
+                             args=(remote, rport, self.ttl.get(remote)), daemon=True).start()
 
     def take_window(self, seconds):
         with self.lock:
@@ -471,6 +473,17 @@ def geo_lookup(ip=""):
         return {}
 
 
+def guess_platform(ttl):
+    """Ipotesi sul sistema dell'avversario dal TTL dei pacchetti (solo P2P).
+    Ogni sistema parte da un valore fisso e ogni router attraversato toglie 1:
+    Windows/Xbox partono da 128, PlayStation/Android/iPhone da 64."""
+    if ttl is None or ttl > 128:
+        return "?"
+    if ttl > 64:
+        return T("probabile PC/Xbox", "likely PC/Xbox")
+    return T("probabile PlayStation/mobile", "likely PlayStation/mobile")
+
+
 def _start(fn, default):
     """Avvia fn in un thread; il risultato finisce in box[0]."""
     box = [default]
@@ -499,7 +512,7 @@ class MatchAnnouncer:
     def _load_home(self):
         self.home = geo_lookup()
 
-    def __call__(self, ip, port):
+    def __call__(self, ip, port, ttl=None):
         t0 = time.monotonic()
         # geolocalizzazione, nome host e ping partono tutti insieme
         jobs = {
@@ -532,6 +545,7 @@ class MatchAnnouncer:
         abroad = bool(geo.get("countryCode") and self.home.get("countryCode")
                       and geo["countryCode"] != self.home["countryCode"])
         who = "server" if cloud else T("avversario", "opponent")
+        platform_guess = "" if cloud else guess_platform(ttl)
         if not geo:
             nation = T("nazione non disponibile", "country not available")
         elif abroad:
@@ -549,6 +563,9 @@ class MatchAnnouncer:
         if cloud:
             print(f"    {DIM}" + T("(partita via server: l'IP dell'avversario non si vede)",
                                    "(match via server: the opponent's IP is hidden)") + RESET)
+        elif platform_guess != "?":
+            print(f"    {CYAN}{T('avversario', 'opponent')}: {platform_guess} "
+                  f"{DIM}(TTL {ttl}){RESET}")
         print()
         if self.beep and IS_WINDOWS:
             try:
@@ -565,8 +582,9 @@ class MatchAnnouncer:
         self.latest[ip] = rec = [now.strftime(T("%d/%m/%Y", "%Y-%m-%d")),
                                  now.strftime("%H:%M:%S"), f"{ip}:{port}", kind, where, geo.get("isp", ""),
                                  YES if abroad else (NO if geo else "?"),
-                                 None if ping is None else round(ping), verdict]
-        self.info[ip] = tuple(rec[3:7])
+                                 None if ping is None else round(ping), verdict,
+                                 None, None, None, None, None, None, platform_guess]
+        self.info[ip] = tuple(rec[3:7]) + (platform_guess,)
         self.matches.append(rec)
 
     def record_for(self, ip, port):
@@ -574,10 +592,11 @@ class MatchAnnouncer:
         rec = self.latest.get(ip)
         if rec is None:
             now = dt.datetime.now()
-            known = self.info.get(ip, ("?", "?", "", "?"))  # stesso server gia' visto
+            known = self.info.get(ip, ("?", "?", "", "?", ""))  # stesso server gia' visto
             rec = self.latest[ip] = [now.strftime(T("%d/%m/%Y", "%Y-%m-%d")),
                                      now.strftime("%H:%M:%S"),
-                                     f"{ip}:{port}", *known, None, CONN_NA]
+                                     f"{ip}:{port}", *known[:4], None, CONN_NA,
+                                     None, None, None, None, None, None, known[4]]
             self.matches.append(rec)
         return rec
 
@@ -604,7 +623,7 @@ class MatchReport:
         bad = (loss or 0) >= 3 or self.gaps >= 10 or (ping or 0) >= 100
         warn = (loss or 0) >= 0.5 or self.gaps >= 3 or (ping or 0) >= 60
         verdict = BAD if bad else WARN if warn else OK
-        self.record[9:] = [round(self.windows * window_s / 60, 1),
+        self.record[9:15] = [round(self.windows * window_s / 60, 1),
                            None if ping is None else round(ping),
                            self.gaps, round(self.max_gap) or None,
                            None if loss is None else round(loss, 1), verdict]
@@ -743,8 +762,9 @@ _HISTORY_HEADER = [("Data", "Date"), ("Ora", "Time"), ("Server", "Server"), ("Ti
                    ("Ping medio in partita (ms)", "Avg match ping (ms)"),
                    ("Scatti", "Stutters"), ("Pausa max (ms)", "Longest pause (ms)"),
                    ("Pacchetti persi (%)", "Packet loss (%)"),
-                   ("Pagella partita", "Match report")]
-_MATCH_WIDTHS = (11, 9, 22, 28, 24, 26, 13, 12, 16, 10, 14, 9, 11, 12, 16)
+                   ("Pagella partita", "Match report"),
+                   ("Avversario (P2P)", "Opponent (P2P)")]
+_MATCH_WIDTHS = (11, 9, 22, 28, 24, 26, 13, 12, 16, 10, 14, 9, 11, 12, 16, 26)
 _LEVEL_COLORS = (("C6EFCE", "006100"), ("FFEB9C", "9C5700"), ("FFC7CE", "9C0006"))
 
 

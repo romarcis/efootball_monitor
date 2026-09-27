@@ -66,6 +66,7 @@ As soon as the game connects to the match server, within about 1 second the PC b
 
 **Dedicated server** means the match goes through a server (for example Google Cloud in Milan). In that case the opponent's IP is not visible, so the country shown is the server's.
 **P2P** means you are connected directly to the opponent, so the country is theirs.
+In P2P matches the alert also guesses the opponent's system from the packets' TTL: **likely PC/Xbox** or **likely PlayStation/mobile**. It is only a hint: PC and Xbox look the same, PlayStation and phones look the same, and some routers change the value.
 
 The country comes from the free ip-api.com service. Discord or other voice calls can trigger false alerts. Add `--mute` to turn the sound off.
 
