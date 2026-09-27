@@ -47,6 +47,50 @@ IS_WINDOWS = platform.system() == "Windows"
 FROZEN = getattr(sys, "frozen", False)  # True quando gira come .exe (PyInstaller)
 
 # --------------------------------------------------------------------------
+# Lingua: italiano o inglese (--lang it|en, default: lingua di Windows)
+# --------------------------------------------------------------------------
+LANG = "it"
+
+
+def T(it, en):
+    """Testo nella lingua scelta."""
+    return it if LANG == "it" else en
+
+
+def detect_lang():
+    try:
+        if IS_WINDOWS:
+            # LANG_ITALIAN = 0x10 nella parte bassa dell'identificativo di lingua
+            if ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF == 0x10:
+                return "it"
+            return "en"
+        import locale
+        return "it" if (locale.getlocale()[0] or "").lower().startswith("it") else "en"
+    except Exception:
+        return "en"
+
+
+def set_lang(lang):
+    """Imposta la lingua e tutte le etichette che finiscono nei file."""
+    global LANG, OK, WARN, BAD, CONN_GOOD, CONN_SOSO, CONN_NA, CONN_POOR, YES, NO
+    global KIND_SERVER, KIND_P2P, CSV_FIELDS, HISTORY_HEADER
+    LANG = lang
+    OK, WARN, BAD = "OK", T("ATTENZIONE", "WARNING"), T("PROBLEMA", "PROBLEM")
+    CONN_GOOD, CONN_SOSO = T("BUONA", "GOOD"), T("COSI' COSI'", "SO-SO")
+    CONN_NA, CONN_POOR = T("NON MISURABILE", "NOT MEASURABLE"), T("SCARSA", "POOR")
+    YES, NO = T("SI", "YES"), "no"
+    KIND_SERVER = T("server dedicato", "dedicated server")
+    KIND_P2P = T("P2P (diretta con l'avversario)", "P2P (direct to opponent)")
+    CSV_FIELDS = [T(it, en) for it, en in _CSV_FIELDS]
+    HISTORY_HEADER = [T(it, en) for it, en in _HISTORY_HEADER]
+
+
+# Etichette dei giudizi in entrambe le lingue -> livello (0 ok, 1 attenzione, 2 problema)
+LEVEL_OF = {"OK": 0, "ATTENZIONE": 1, "WARNING": 1, "PROBLEMA": 2, "PROBLEM": 2}
+CONN_LEVEL = {"BUONA": 0, "GOOD": 0, "COSI' COSI'": 1, "SO-SO": 1, "NON MISURABILE": 1,
+              "NOT MEASURABLE": 1, "SCARSA": 2, "POOR": 2}
+
+# --------------------------------------------------------------------------
 # Colori terminale
 # --------------------------------------------------------------------------
 if IS_WINDOWS:
@@ -262,9 +306,12 @@ def wifi_info():
         global _LOCATION_WARNED
         if not _LOCATION_WARNED:
             _LOCATION_WARNED = True
-            print(f"{YELLOW}Windows blocca la lettura del segnale Wi-Fi perche' la "
-                  f"posizione e' disattivata. Riattivala in Impostazioni > Privacy e "
-                  f"sicurezza > Posizione per vedere segnale, banda e canale.{RESET}")
+            print(YELLOW + T("Windows blocca la lettura del segnale Wi-Fi perche' la posizione "
+                             "e' disattivata. Riattivala in Impostazioni > Privacy e "
+                             "sicurezza > Posizione per vedere segnale, banda e canale.",
+                             "Windows blocks reading the Wi-Fi signal because Location is "
+                             "turned off. Turn it on in Settings > Privacy & security > "
+                             "Location to see signal, band and channel.") + RESET)
         return info
     m = re.search(r"^\s*SSID\s*:\s*(.+?)\s*$", text, re.MULTILINE)
     if m:
@@ -414,7 +461,7 @@ CLOUD_HINTS = ("googleusercontent", "amazonaws", "azure", "cloudapp", "gcp", "ko
 def geo_lookup(ip=""):
     """Nazione/citta'/provider di un IP (vuoto = il tuo IP pubblico) via ip-api.com.
     Restituisce {} se non risponde in tempo."""
-    url = (f"http://ip-api.com/json/{ip}?lang=it"
+    url = (f"http://ip-api.com/json/{ip}?lang={'it' if LANG == 'it' else 'en'}"
            "&fields=status,country,countryCode,city,isp,org,hosting")
     try:
         with urllib.request.urlopen(url, timeout=1.2) as r:
@@ -469,36 +516,39 @@ class MatchAnnouncer:
         geo, host, rtts = (jobs[k][1][0] for k in ("geo", "host", "ping"))
 
         cloud = geo.get("hosting") or any(h in (host or "").lower() for h in CLOUD_HINTS)
-        kind = "server dedicato" if cloud else "P2P (diretta con l'avversario)"
+        kind = KIND_SERVER if cloud else KIND_P2P
         ok = [r for r in rtts if r is not None]
         ping = statistics.fmean(ok) if ok else None
         if ping is None:
-            verdict, beeps, col = "NON MISURABILE", 2, YELLOW
+            verdict, beeps, col = CONN_NA, 2, YELLOW
         elif ping <= 40 and len(ok) == len(rtts):
-            verdict, beeps, col = "BUONA", 1, GREEN
+            verdict, beeps, col = CONN_GOOD, 1, GREEN
         elif ping <= 80:
-            verdict, beeps, col = "COSI' COSI'", 2, YELLOW
+            verdict, beeps, col = CONN_SOSO, 2, YELLOW
         else:
-            verdict, beeps, col = "SCARSA", 3, RED
+            verdict, beeps, col = CONN_POOR, 3, RED
 
         where = ", ".join(x for x in (geo.get("city"), geo.get("country")) if x) or "?"
         abroad = bool(geo.get("countryCode") and self.home.get("countryCode")
                       and geo["countryCode"] != self.home["countryCode"])
-        who = "server" if cloud else "avversario"
+        who = "server" if cloud else T("avversario", "opponent")
         if not geo:
-            nation = "nazione non disponibile"
+            nation = T("nazione non disponibile", "country not available")
         elif abroad:
-            nation = f"{who.upper()} IN UN'ALTRA NAZIONE ({geo.get('country')})"
+            nation = T(f"{who.upper()} IN UN'ALTRA NAZIONE ({geo.get('country')})",
+                       f"{who.upper()} IN ANOTHER COUNTRY ({geo.get('country')})")
         else:
-            nation = f"{who} nella tua stessa nazione"
+            nation = T(f"{who} nella tua stessa nazione", f"{who} in your own country")
         now = dt.datetime.now()
         secs = time.monotonic() - t0
-        print(f"\n{col}{now:%H:%M:%S} >>> PARTITA IN ARRIVO ({secs:.1f} s)  {kind}  "
-              f"{ip}:{port}  {where}  ping {fmt(ping, ' ms')}  -> connessione {verdict}"
+        print(f"\n{col}{now:%H:%M:%S} >>> {T('PARTITA IN ARRIVO', 'MATCH INCOMING')} "
+              f"({secs:.1f} s)  {kind}  {ip}:{port}  {where}  ping {fmt(ping, ' ms')}  "
+              f"-> {T('connessione', 'connection')} {verdict}"
               f"{RESET}\n    {RED if abroad else CYAN}{nation}"
               f"{'  - ' + geo.get('isp', '') if geo.get('isp') else ''}{RESET}")
         if cloud:
-            print(f"    {DIM}(partita via server: l'IP dell'avversario non si vede){RESET}")
+            print(f"    {DIM}" + T("(partita via server: l'IP dell'avversario non si vede)",
+                                   "(match via server: the opponent's IP is hidden)") + RESET)
         print()
         if self.beep and IS_WINDOWS:
             try:
@@ -512,9 +562,9 @@ class MatchAnnouncer:
                     winsound.Beep(500, 700)
             except Exception:
                 pass
-        self.latest[ip] = rec = [now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S"),
-                                 f"{ip}:{port}", kind, where, geo.get("isp", ""),
-                                 "SI" if abroad else ("no" if geo else "?"),
+        self.latest[ip] = rec = [now.strftime(T("%d/%m/%Y", "%Y-%m-%d")),
+                                 now.strftime("%H:%M:%S"), f"{ip}:{port}", kind, where, geo.get("isp", ""),
+                                 YES if abroad else (NO if geo else "?"),
                                  None if ping is None else round(ping), verdict]
         self.info[ip] = tuple(rec[3:7])
         self.matches.append(rec)
@@ -525,8 +575,9 @@ class MatchAnnouncer:
         if rec is None:
             now = dt.datetime.now()
             known = self.info.get(ip, ("?", "?", "", "?"))  # stesso server gia' visto
-            rec = self.latest[ip] = [now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S"),
-                                     f"{ip}:{port}", *known, None, "NON MISURABILE"]
+            rec = self.latest[ip] = [now.strftime(T("%d/%m/%Y", "%Y-%m-%d")),
+                                     now.strftime("%H:%M:%S"),
+                                     f"{ip}:{port}", *known, None, CONN_NA]
             self.matches.append(rec)
         return rec
 
@@ -570,19 +621,25 @@ def _rdns(ip):
 # --------------------------------------------------------------------------
 # Main loop
 # --------------------------------------------------------------------------
-CSV_FIELDS = [
-    "Data", "Ora", "Giudizio", "Cosa non va",
-    "Segnale Wi-Fi (%)", "Segnale Wi-Fi (dBm)", "Banda Wi-Fi", "Canale Wi-Fi",
-    "Ping router (ms)", "Sbalzi ping router (ms)", "Pacchetti persi router (%)",
-    "Ping internet (ms)", "Ping internet peggiore (ms)", "Sbalzi ping internet (ms)",
-    "Pacchetti persi internet (%)",
-    "Server partita", "Pacchetti partita ricevuti al secondo",
-    "Pacchetti partita inviati al secondo", "Pacchetti persi in partita (%)",
-    "Scatti in partita",
-    "Pausa piu lunga in partita (ms)", "Ping server partita (ms)",
+# Colonne del file della sessione (l'ordine conta: l'Excel le legge per posizione)
+_CSV_FIELDS = [
+    ("Data", "Date"), ("Ora", "Time"), ("Giudizio", "Verdict"), ("Cosa non va", "What's wrong"),
+    ("Segnale Wi-Fi (%)", "Wi-Fi signal (%)"), ("Segnale Wi-Fi (dBm)", "Wi-Fi signal (dBm)"),
+    ("Banda Wi-Fi", "Wi-Fi band"), ("Canale Wi-Fi", "Wi-Fi channel"),
+    ("Ping router (ms)", "Router ping (ms)"), ("Sbalzi ping router (ms)", "Router jitter (ms)"),
+    ("Pacchetti persi router (%)", "Router packet loss (%)"),
+    ("Ping internet (ms)", "Internet ping (ms)"),
+    ("Ping internet peggiore (ms)", "Worst internet ping (ms)"),
+    ("Sbalzi ping internet (ms)", "Internet jitter (ms)"),
+    ("Pacchetti persi internet (%)", "Internet packet loss (%)"),
+    ("Server partita", "Match server"),
+    ("Pacchetti partita ricevuti al secondo", "Match packets received per second"),
+    ("Pacchetti partita inviati al secondo", "Match packets sent per second"),
+    ("Pacchetti persi in partita (%)", "Match packet loss (%)"),
+    ("Scatti in partita", "Match stutters"),
+    ("Pausa piu lunga in partita (ms)", "Longest match pause (ms)"),
+    ("Ping server partita (ms)", "Match server ping (ms)"),
 ]
-
-OK, WARN, BAD = "OK", "ATTENZIONE", "PROBLEMA"
 
 
 def diagnose(wi, gwr, net, m, srv, roamed):
@@ -599,39 +656,48 @@ def diagnose(wi, gwr, net, m, srv, roamed):
 
     sig = wi.get("signal")
     if sig is not None:
-        check(100 - sig, 30, 50, "segnale Wi-Fi debole ({0}%)".format(sig))
+        check(100 - sig, 30, 50, T("segnale Wi-Fi debole ({0}%)", "weak Wi-Fi signal ({0}%)").format(sig))
     if roamed:
-        issues.append((2, "il PC ha cambiato antenna/access point"))
+        issues.append((2, T("il PC ha cambiato antenna/access point",
+                              "the PC switched access point")))
     if gwr:
         if gwr["sent"] and gwr["avg"] is None:
-            issues.append((2, "il router non risponde"))
-        check(gwr["loss"], 0.1, 2, "il Wi-Fi perde pacchetti ({v:.0f}%)")
-        check(gwr["jitter"], 6, 15, "Wi-Fi instabile, il ping al router balla di {v:.0f} ms")
-        check(gwr["avg"], 10, 30, "Wi-Fi lento, ping al router {v:.0f} ms")
+            issues.append((2, T("il router non risponde", "the router is not responding")))
+        check(gwr["loss"], 0.1, 2, T("il Wi-Fi perde pacchetti ({v:.0f}%)",
+                                      "Wi-Fi is losing packets ({v:.0f}%)"))
+        check(gwr["jitter"], 6, 15, T("Wi-Fi instabile, il ping al router balla di {v:.0f} ms",
+                                       "unstable Wi-Fi, router ping swings by {v:.0f} ms"))
+        check(gwr["avg"], 10, 30, T("Wi-Fi lento, ping al router {v:.0f} ms",
+                                     "slow Wi-Fi, router ping {v:.0f} ms"))
     if net["sent"] and net["avg"] is None:
-        issues.append((2, "internet non risponde"))
+        issues.append((2, T("internet non risponde", "internet is not responding")))
     else:
-        check(net["loss"], 0.1, 2, "la linea internet perde pacchetti ({v:.0f}%)")
-        check(net["jitter"], 8, 20, "linea instabile, il ping internet balla di {v:.0f} ms")
-        check(net["avg"], 50, 100, "ping internet alto ({v:.0f} ms)")
+        check(net["loss"], 0.1, 2, T("la linea internet perde pacchetti ({v:.0f}%)",
+                                      "the internet line is losing packets ({v:.0f}%)"))
+        check(net["jitter"], 8, 20, T("linea instabile, il ping internet balla di {v:.0f} ms",
+                                       "unstable line, internet ping swings by {v:.0f} ms"))
+        check(net["avg"], 50, 100, T("ping internet alto ({v:.0f} ms)", "high internet ping ({v:.0f} ms)"))
     if m:
-        check(m["gaps"], 1, 3, "{v} scatti in partita (pause oltre 150 ms)")
-        check(m["loss"], 1, 5, "persi {v:.0f}% dei pacchetti dal server")
+        check(m["gaps"], 1, 3, T("{v} scatti in partita (pause oltre 150 ms)",
+                                  "{v} match stutters (pauses over 150 ms)"))
+        check(m["loss"], 1, 5, T("persi {v:.0f}% dei pacchetti dal server",
+                                  "lost {v:.0f}% of packets from the server"))
     if srv and not srv["no_icmp"]:
-        check(srv["avg"], 70, 120, "server della partita lontano ({v:.0f} ms)")
+        check(srv["avg"], 70, 120, T("server della partita lontano ({v:.0f} ms)",
+                                      "match server far away ({v:.0f} ms)"))
 
     if not issues:
-        return OK, "tutto a posto"
+        return OK, T("tutto a posto", "all good")
     level = BAD if any(g == 2 for g, _ in issues) else WARN
     issues.sort(key=lambda x: -x[0])
     return level, "; ".join(t for _, t in issues)
 
 
 def num(v, nd=0):
-    """Numero con la virgola, come lo vuole Excel in italiano."""
+    """Numero per il file: con la virgola in italiano, col punto in inglese."""
     if v is None:
         return ""
-    return f"{v:.{nd}f}".replace(".", ",")
+    return f"{v:.{nd}f}".replace(".", ",") if LANG == "it" else f"{v:.{nd}f}"
 
 
 def fmt(v, suffix="", nd=0):
@@ -650,40 +716,43 @@ def fmt_ping(label, r, good_ms, bad_ms):
 # --------------------------------------------------------------------------
 # Excel colorato (serve: pip install openpyxl)
 # --------------------------------------------------------------------------
-# colonna -> (soglia giallo, soglia rosso, True se "piu' alto = peggio")
+# numero di colonna -> (soglia giallo, soglia rosso, True se "piu' alto = peggio")
 XLSX_THRESHOLDS = {
-    "Segnale Wi-Fi (%)": (70, 50, False),
-    "Ping router (ms)": (10, 30, True),
-    "Sbalzi ping router (ms)": (6, 15, True),
-    "Pacchetti persi router (%)": (0.1, 2, True),
-    "Ping internet (ms)": (50, 100, True),
-    "Ping internet peggiore (ms)": (100, 200, True),
-    "Sbalzi ping internet (ms)": (8, 20, True),
-    "Pacchetti persi internet (%)": (0.1, 2, True),
-    "Pacchetti persi in partita (%)": (1, 5, True),
-    "Scatti in partita": (1, 3, True),
-    "Pausa piu lunga in partita (ms)": (150, 300, True),
-    "Ping server partita (ms)": (70, 120, True),
+    4: (70, 50, False),      # segnale Wi-Fi %
+    8: (10, 30, True),       # ping router
+    9: (6, 15, True),        # sbalzi router
+    10: (0.1, 2, True),      # persi router
+    11: (50, 100, True),     # ping internet
+    12: (100, 200, True),    # ping internet peggiore
+    13: (8, 20, True),       # sbalzi internet
+    14: (0.1, 2, True),      # persi internet
+    18: (1, 5, True),        # persi in partita
+    19: (1, 3, True),        # scatti
+    20: (150, 300, True),    # pausa piu' lunga
+    21: (70, 120, True),     # ping server
 }
+SUMMARY_COLUMNS = (4, 8, 9, 10, 11, 13, 14, 18, 19, 21)
 
 
 HISTORY_FILE = "efootball_match_history.xlsx"
-HISTORY_HEADER = ["Data", "Ora", "Server", "Tipo", "Dove", "Provider",
-                  "Altra nazione", "Ping iniziale (ms)", "Connessione all'avvio",
-                  "Durata (min)", "Ping medio in partita (ms)", "Scatti", "Pausa max (ms)",
-                  "Pacchetti persi (%)", "Pagella partita"]
+_HISTORY_HEADER = [("Data", "Date"), ("Ora", "Time"), ("Server", "Server"), ("Tipo", "Type"),
+                   ("Dove", "Where"), ("Provider", "Provider"),
+                   ("Altra nazione", "Other country"), ("Ping iniziale (ms)", "Start ping (ms)"),
+                   ("Connessione all'avvio", "Connection at start"),
+                   ("Durata (min)", "Duration (min)"),
+                   ("Ping medio in partita (ms)", "Avg match ping (ms)"),
+                   ("Scatti", "Stutters"), ("Pausa max (ms)", "Longest pause (ms)"),
+                   ("Pacchetti persi (%)", "Packet loss (%)"),
+                   ("Pagella partita", "Match report")]
 _MATCH_WIDTHS = (11, 9, 22, 28, 24, 26, 13, 12, 16, 10, 14, 9, 11, 12, 16)
-_VERDICT_COLORS = {"BUONA": ("C6EFCE", "006100"), "COSI' COSI'": ("FFEB9C", "9C5700"),
-                   "NON MISURABILE": ("FFEB9C", "9C5700"), "SCARSA": ("FFC7CE", "9C0006"),
-                   OK: ("C6EFCE", "006100"), WARN: ("FFEB9C", "9C5700"),
-                   BAD: ("FFC7CE", "9C0006")}
+_LEVEL_COLORS = (("C6EFCE", "006100"), ("FFEB9C", "9C5700"), ("FFC7CE", "9C0006"))
 
 
 def write_match_rows(ws, matches, new_sheet):
     """Scrive (o aggiunge) le righe delle partite con intestazione e colori."""
     from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
-    if new_sheet or ws.max_row < 1 or ws.cell(1, 1).value != "Data" \
+    if new_sheet or ws.max_row < 1 or ws.cell(1, 1).value not in ("Data", "Date") \
             or ws.max_column < len(HISTORY_HEADER):
         for i, h in enumerate(HISTORY_HEADER, 1):   # crea o aggiorna l'intestazione
             c = ws.cell(1, i, h)
@@ -696,11 +765,13 @@ def write_match_rows(ws, matches, new_sheet):
         ws.append(m)
         r = ws.max_row
         for col in (9, 15):
-            if col <= len(m) and m[col - 1] in _VERDICT_COLORS:
-                bg, fg = _VERDICT_COLORS[m[col - 1]]
+            lv = (CONN_LEVEL if col == 9 else LEVEL_OF).get(m[col - 1]) \
+                if col <= len(m) else None
+            if lv is not None:
+                bg, fg = _LEVEL_COLORS[lv]
                 ws.cell(r, col).fill = PatternFill("solid", start_color=bg)
                 ws.cell(r, col).font = Font(color=fg, bold=(col == 15))
-        if m[6] == "SI":
+        if m[6] in ("SI", "YES"):
             ws.cell(r, 7).fill = PatternFill("solid", start_color="FFC7CE")
             ws.cell(r, 7).font = Font(color="9C0006")
     ws.auto_filter.ref = ws.dimensions
@@ -720,13 +791,15 @@ def append_history(matches, folder):
         write_match_rows(wb.active, matches, new_sheet=False)
     else:
         wb = Workbook()
-        wb.active.title = "Partite"
+        wb.active.title = T("Partite", "Matches")
         write_match_rows(wb.active, matches, new_sheet=True)
     try:
         wb.save(path)
     except PermissionError:
-        print(f"{RED}Non riesco ad aggiornare {path}: e' aperto in Excel? Le partite di questa "
-              f"sessione restano comunque nel file della sessione.{RESET}")
+        print(RED + T(f"Non riesco ad aggiornare {path}: e' aperto in Excel? Le partite di "
+                      f"questa sessione restano comunque nel file della sessione.",
+                      f"Can't update {path}: is it open in Excel? This session's matches are "
+                      f"still in the session file.") + RESET)
         return None
     return path
 
@@ -738,15 +811,16 @@ def make_xlsx(csv_path, matches=None):
         from openpyxl.styles import Alignment, Font, PatternFill
         from openpyxl.utils import get_column_letter
     except ImportError:
-        print(f"{YELLOW}Per il file Excel colorato esegui 'pip install openpyxl' e poi: "
-              f"python efootball_monitor.py --excel \"{csv_path}\"{RESET}")
+        print(YELLOW + T("Per il file Excel colorato esegui 'pip install openpyxl' e poi: ",
+                         "For the color-coded Excel file run 'pip install openpyxl' and then: ")
+              + f"python efootball_monitor.py --excel \"{csv_path}\"{RESET}")
         return None
 
     try:
         with open(csv_path, encoding="utf-8-sig", newline="") as fh:
             rows = list(csv.reader(fh, delimiter=";"))
     except OSError as e:
-        print(f"{RED}Non riesco a leggere {csv_path}: {e}{RESET}")
+        print(f"{RED}{T('Non riesco a leggere', 'Cannot read')} {csv_path}: {e}{RESET}")
         return None
     if len(rows) < 2:
         return None
@@ -755,7 +829,7 @@ def make_xlsx(csv_path, matches=None):
     fills = {k: PatternFill("solid", start_color=c) for k, c in
              (("g", "C6EFCE"), ("y", "FFEB9C"), ("r", "FFC7CE"), ("h", "1F4E78"))}
     fonts = {"g": Font(color="006100"), "y": Font(color="9C5700"), "r": Font(color="9C0006")}
-    level_key = {OK: "g", WARN: "y", BAD: "r"}
+    level_key = ("g", "y", "r")
 
     def to_num(v):
         try:
@@ -765,7 +839,7 @@ def make_xlsx(csv_path, matches=None):
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "Andamento"
+    ws.title = T("Andamento", "Timeline")
     ws.append(header)
     for c in ws[1]:
         c.fill, c.font = fills["h"], Font(bold=True, color="FFFFFF")
@@ -777,14 +851,15 @@ def make_xlsx(csv_path, matches=None):
         values = [to_num(v) if i >= 4 else v for i, v in enumerate(r)]
         ws.append(values)
         row = ws.max_row
-        counts[r[2]] += 1
-        k = level_key.get(r[2])
+        lv = LEVEL_OF.get(r[2])
+        counts[lv] += 1
+        k = level_key[lv] if lv is not None else None
         if k:
             for col in (3, 4):
                 cell = ws.cell(row, col)
                 cell.fill, cell.font = fills[k], Font(bold=(col == 3), color=fonts[k].color)
-        for i, name in enumerate(header):
-            th = XLSX_THRESHOLDS.get(name)
+        for i in range(len(header)):
+            th = XLSX_THRESHOLDS.get(i)
             v = values[i] if i < len(values) else None
             if not th or not isinstance(v, float):
                 continue
@@ -795,88 +870,111 @@ def make_xlsx(csv_path, matches=None):
             cell = ws.cell(row, i + 1)
             cell.fill, cell.font = fills[key], fonts[key]
 
-    widths = {"Cosa non va": 60, "Giudizio": 13, "Data": 11, "Server partita": 22}
-    for i, name in enumerate(header, 1):
-        ws.column_dimensions[get_column_letter(i)].width = widths.get(name, 12)
+    widths = {1: 11, 3: 13, 4: 60, 16: 22}
+    for i in range(1, len(header) + 1):
+        ws.column_dimensions[get_column_letter(i)].width = widths.get(i, 12)
     ws.freeze_panes = "E2"
     ws.auto_filter.ref = ws.dimensions
 
     # Foglio di riepilogo
-    rs = wb.create_sheet("Riepilogo", 0)
+    rs = wb.create_sheet(T("Riepilogo", "Summary"), 0)
     rs.column_dimensions["A"].width = 34
     rs.column_dimensions["B"].width = 16
-    rs["A1"] = "Riepilogo connessione eFootball"
+    rs["A1"] = T("Riepilogo connessione eFootball", "eFootball connection summary")
     rs["A1"].font = Font(bold=True, size=14)
-    rs["A2"] = f"{data[0][0]} dalle {data[0][1]} alle {data[-1][1]}"
+    rs["A2"] = T(f"{data[0][0]} dalle {data[0][1]} alle {data[-1][1]}",
+                 f"{data[0][0]} from {data[0][1]} to {data[-1][1]}")
     rs.append([])
-    rs.append(["Giudizio", "% del tempo"])
+    rs.append([T("Giudizio", "Verdict"), T("% del tempo", "% of time")])
     for c in rs[rs.max_row]:
         c.font = Font(bold=True)
     tot = len(data)
-    for lv in (OK, WARN, BAD):
-        rs.append([lv, round(100 * counts[lv] / tot, 1)])
+    for lv, label in enumerate((OK, WARN, BAD)):
+        rs.append([label, round(100 * counts[lv] / tot, 1)])
         k = level_key[lv]
         for c in rs[rs.max_row]:
             c.fill, c.font = fills[k], fonts[k]
     rs.append([])
-    rs.append(["Media della sessione", "valore"])
+    rs.append([T("Media della sessione", "Session average"), T("valore", "value")])
     for c in rs[rs.max_row]:
         c.font = Font(bold=True)
-    for name in ("Segnale Wi-Fi (%)", "Ping router (ms)", "Sbalzi ping router (ms)",
-                 "Pacchetti persi router (%)", "Ping internet (ms)",
-                 "Sbalzi ping internet (ms)", "Pacchetti persi internet (%)",
-                 "Scatti in partita", "Ping server partita (ms)"):
-        i = header.index(name)
+    for i in SUMMARY_COLUMNS:
+        name = header[i] if i < len(header) else ""
         vals = [to_num(r[i]) for r in data if i < len(r)]
         vals = [v for v in vals if isinstance(v, float)]
         if vals:
             rs.append([name, round(statistics.fmean(vals), 1)])
     problems = defaultdict(int)
     for r in data:
-        if r[2] != OK:
+        if LEVEL_OF.get(r[2], 0) != 0:
             for p in r[3].split("; "):
                 key = re.sub(r"\(.*?\)", "", p.split(",")[0])  # senza i numeri
                 problems[re.sub(r"^\d+\s*", "", key).strip()] += 1
     if problems:
         rs.append([])
-        rs.append(["Problemi piu frequenti", "quante volte"])
+        rs.append([T("Problemi piu frequenti", "Most frequent problems"),
+                   T("quante volte", "how many times")])
         for c in rs[rs.max_row]:
             c.font = Font(bold=True)
         for p, n in sorted(problems.items(), key=lambda x: -x[1])[:6]:
             rs.append([p, n])
 
     if matches:
-        write_match_rows(wb.create_sheet("Partite", 1), matches, new_sheet=True)
+        write_match_rows(wb.create_sheet(T("Partite", "Matches"), 1), matches, new_sheet=True)
 
     xlsx_path = os.path.splitext(csv_path)[0] + ".xlsx"
     try:
         wb.save(xlsx_path)
     except PermissionError:
-        print(f"{RED}Non riesco a salvare {xlsx_path}: e' aperto in Excel? Chiudilo e riprova "
-              f"con --excel.{RESET}")
+        print(RED + T(f"Non riesco a salvare {xlsx_path}: e' aperto in Excel? Chiudilo e "
+                      f"riprova con --excel.",
+                      f"Can't save {xlsx_path}: is it open in Excel? Close it and try again "
+                      f"with --excel.") + RESET)
         return None
     return xlsx_path
 
 
+set_lang("it")  # valori di default; main() li reimposta con la lingua scelta
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Monitor connessione per eFootball (Wi-Fi, Windows)")
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--lang", choices=("it", "en"))
+    set_lang(pre.parse_known_args()[0].lang or detect_lang())
+
+    ap = argparse.ArgumentParser(description=T(
+        "Monitor connessione per eFootball (Wi-Fi, Windows)",
+        "Connection monitor for eFootball (Wi-Fi, Windows)"))
+    ap.add_argument("--lang", choices=("it", "en"),
+                    help=T("lingua: it o en (default: quella di Windows)",
+                           "language: it or en (default: Windows language)"))
     ap.add_argument("--internet", default="1.1.1.1",
-                    help="host internet da pingare (default 1.1.1.1)")
-    ap.add_argument("--gateway", help="IP del router (default: rilevato da solo)")
+                    help=T("host internet da pingare (default 1.1.1.1)",
+                           "internet host to ping (default 1.1.1.1)"))
+    ap.add_argument("--gateway", help=T("IP del router (default: rilevato da solo)",
+                                        "router IP (default: detected automatically)"))
     ap.add_argument("--interval", type=float, default=0.5,
-                    help="secondi tra un ping e l'altro (default 0.5)")
+                    help=T("secondi tra un ping e l'altro (default 0.5)",
+                           "seconds between pings (default 0.5)"))
     ap.add_argument("--window", type=float, default=5,
-                    help="secondi per ogni riga/riga CSV (default 5)")
+                    help=T("secondi per ogni riga (default 5)",
+                           "seconds per output line (default 5)"))
     ap.add_argument("--csv", default=None,
-                    help="nome del file della sessione (default efootball_log_AAAAMMGG_HHMMSS)")
+                    help=T("nome del file della sessione (default efootball_log_AAAAMMGG_HHMMSS)",
+                           "session file name (default efootball_log_YYYYMMDD_HHMMSS)"))
     ap.add_argument("--sniff", action="store_true",
-                    help="analizza il traffico UDP della partita (serve Npcap + scapy, "
-                         "avvia il prompt come amministratore)")
-    ap.add_argument("--muto", action="store_true",
-                    help="niente bip quando viene trovata una partita")
-    ap.add_argument("--iface", help="nome interfaccia per --sniff (default: automatica)")
+                    help=T("analizza il traffico UDP della partita (serve Npcap + scapy, "
+                           "avvia il prompt come amministratore)",
+                           "analyse the match UDP traffic (needs Npcap + scapy, "
+                           "run the prompt as administrator)"))
+    ap.add_argument("--muto", "--mute", dest="muto", action="store_true",
+                    help=T("niente bip quando viene trovata una partita",
+                           "no beeps when a match is found"))
+    ap.add_argument("--iface", help=T("nome interfaccia per --sniff (default: automatica)",
+                                      "network interface for --sniff (default: automatic)"))
     ap.add_argument("--excel", metavar="FILE_CSV",
-                    help="crea solo il file Excel colorato da un CSV gia' registrato")
+                    help=T("crea solo il file Excel colorato da un CSV gia' registrato",
+                           "only build the color-coded Excel file from a recorded CSV"))
     args = ap.parse_args()
     if FROZEN and len(sys.argv) == 1:
         args.sniff = True  # .exe avviato con doppio clic: analisi partita attiva
@@ -884,7 +982,7 @@ def main():
     if args.excel:
         out = make_xlsx(args.excel)
         if out:
-            print(f"Excel salvato in {os.path.abspath(out)}")
+            print(f"{T('Excel salvato in', 'Excel saved to')} {os.path.abspath(out)}")
         return
 
     ping_fn = make_ping_fn()
@@ -893,23 +991,27 @@ def main():
     csv_path = args.csv or dt.datetime.now().strftime("efootball_log_%Y%m%d_%H%M%S.csv")
     timeout_ms = 1000
 
-    print(f"{CYAN}eFootball Wi-Fi Monitor{RESET}  IP locale {my_ip}  router {gw}  "
-          f"internet {args.internet}")
+    print(f"{CYAN}eFootball Wi-Fi Monitor{RESET}  {T('IP locale', 'local IP')} {my_ip}  "
+          f"router {gw}  internet {args.internet}")
     wi = wifi_info()
     if wi:
         print(f"Wi-Fi: {wi.get('ssid', '?')}  {wi.get('radio', '')} {wi.get('band', '')} "
-              f"canale {wi.get('channel', '?')}")
+              f"{T('canale', 'channel')} {wi.get('channel', '?')}")
         if wi.get("band", "").startswith("2.4") or (wi.get("channel") or 99) <= 14:
-            print(f"{YELLOW}Sei sulla banda 2.4 GHz: se il router lo permette usa la 5 GHz, "
-                  f"di solito ha meno interferenze e jitter.{RESET}")
+            print(YELLOW + T("Sei sulla banda 2.4 GHz: se il router lo permette usa la 5 GHz, "
+                             "di solito ha meno interferenze e jitter.",
+                             "You are on the 2.4 GHz band: if your router allows it use "
+                             "5 GHz, it usually has less interference and jitter.") + RESET)
     elif IS_WINDOWS:
-        print(f"{YELLOW}Nessuna rete Wi-Fi rilevata (sei via cavo?).{RESET}")
+        print(YELLOW + T("Nessuna rete Wi-Fi rilevata (sei via cavo?).",
+                         "No Wi-Fi network detected (are you on a cable?).") + RESET)
 
     targets = {"net": PingTarget("internet", args.internet, args.interval, timeout_ms, ping_fn)}
     if gw:
         targets["gw"] = PingTarget("router", gw, args.interval, timeout_ms, ping_fn)
     else:
-        print(f"{YELLOW}Router non rilevato: usa --gateway 192.168.1.1 (o simile).{RESET}")
+        print(YELLOW + T("Router non rilevato: usa --gateway 192.168.1.1 (o simile).",
+                         "Router not detected: use --gateway 192.168.1.1 (or similar).") + RESET)
 
     sniffer = None
     announcer = None
@@ -919,22 +1021,32 @@ def main():
             sniffer = MatchSniffer(my_ip, iface=args.iface, on_new_remote=announcer)
             targets["srv"] = PingTarget("server", None, args.interval, timeout_ms, ping_fn,
                                           may_block_icmp=True)
-            print("Analisi traffico partita attiva: avvia una partita online.")
+            print(T("Analisi traffico partita attiva: avvia una partita online.",
+                    "Match traffic analysis on: start an online match."))
         except ImportError:
-            print(f"{RED}scapy non installato: esegui 'pip install scapy' "
-                  f"(e installa Npcap da https://npcap.com).{RESET}")
+            print(RED + T("scapy non installato: esegui 'pip install scapy' "
+                          "(e installa Npcap da https://npcap.com).",
+                          "scapy is not installed: run 'pip install scapy' "
+                          "(and install Npcap from https://npcap.com).") + RESET)
         except Exception as e:
-            print(f"{RED}Sniffer non avviato ({e}). Serve Npcap e il prompt come "
-                  f"amministratore. Continuo senza.{RESET}")
+            print(RED + T(f"Sniffer non avviato ({e}). Serve Npcap e il prompt come "
+                          f"amministratore. Continuo senza.",
+                          f"Sniffer not started ({e}). Npcap and an administrator prompt "
+                          f"are needed. Continuing without it.") + RESET)
 
     try:
         import openpyxl  # noqa: F401
-        print(f"Il file Excel viene creato quando premi Ctrl+C: "
-              f"{os.path.abspath(os.path.splitext(csv_path)[0] + '.xlsx')}")
+        print(T("Il file Excel viene creato quando premi Ctrl+C: ",
+                "The Excel file is created when you press Ctrl+C: ")
+              + os.path.abspath(os.path.splitext(csv_path)[0] + ".xlsx"))
     except ImportError:
-        print(f"{YELLOW}openpyxl non installato: salvo solo il CSV {os.path.abspath(csv_path)}."
-              f" Per l'Excel esegui 'pip install openpyxl'.{RESET}")
-    print(f"{DIM}Colonne: ping medio ±jitter perdita. Ctrl+C per fermare.{RESET}\n")
+        print(YELLOW + T(f"openpyxl non installato: salvo solo il CSV "
+                         f"{os.path.abspath(csv_path)}. Per l'Excel esegui 'pip install openpyxl'.",
+                         f"openpyxl is not installed: saving only the CSV "
+                         f"{os.path.abspath(csv_path)}. For Excel run 'pip install openpyxl'.")
+              + RESET)
+    print(DIM + T("Colonne: ping medio ±jitter perdita. Ctrl+C per fermare.",
+                  "Columns: avg ping ±jitter loss. Ctrl+C to stop.") + RESET + "\n")
 
     f = open(csv_path, "w", newline="", encoding="utf-8-sig")  # -sig: accenti ok in Excel
     writer = csv.DictWriter(f, fieldnames=CSV_FIELDS, delimiter=";")
@@ -950,9 +1062,10 @@ def main():
         if report:
             verdict, ping, loss = report.finish(args.window)
             col = RED if verdict == BAD else YELLOW if verdict == WARN else GREEN
-            print(f"{col}{dt.datetime.now():%H:%M:%S} Fine partita: pagella {verdict}  "
-                  f"ping {fmt(ping, ' ms')}  scatti {report.gaps}  "
-                  f"persi {fmt(loss, '%', 1)}{RESET}")
+            print(f"{col}{dt.datetime.now():%H:%M:%S} "
+                  f"{T('Fine partita: pagella', 'Match over: report')} {verdict}  "
+                  f"ping {fmt(ping, ' ms')}  {T('scatti', 'stutters')} {report.gaps}  "
+                  f"{T('persi', 'lost')} {fmt(loss, '%', 1)}{RESET}")
             if announcer:
                 ip = report.record[2].split(":")[0]
                 if announcer.latest.get(ip) is report.record:
@@ -969,15 +1082,15 @@ def main():
             if m and "srv" in targets:
                 targets["srv"].set_ip(m["ip"])
                 if m["new"]:
-                    print(f"{CYAN}{now:%H:%M:%S} Nuova partita / server: "
+                    print(f"{CYAN}{now:%H:%M:%S} {T('Nuova partita / server:', 'New match / server:')} "
                           f"{m['ip']}:{m['port']}{RESET}")
             elif sniffer and "srv" in targets:
                 targets["srv"].set_ip(None)
 
             roamed = bool(wi.get("bssid") and last_bssid and wi["bssid"] != last_bssid)
             if roamed:
-                print(f"{RED}{now:%H:%M:%S} Cambio access point (roaming): "
-                      f"{last_bssid} -> {wi['bssid']}{RESET}")
+                print(f"{RED}{now:%H:%M:%S} {T('Cambio access point', 'Access point change')} "
+                      f"(roaming): {last_bssid} -> {wi['bssid']}{RESET}")
             last_bssid = wi.get("bssid") or last_bssid
 
             parts = [f"{now:%H:%M:%S}"]
@@ -995,16 +1108,17 @@ def main():
             parts.append(fmt_ping("internet", res["net"], 40, 100))
             worst["net_max"] = max(worst["net_max"], res["net"]["max"] or 0)
             if m:
-                gap_txt = color(m["gaps"], f"{m['gaps']} scatti", 0, 3)
+                gap_txt = color(m["gaps"], f"{m['gaps']} {T('scatti', 'stutters')}", 0, 3)
                 if m["loss"] is not None:
-                    gap_txt += " " + color(m["loss"], f"persi {m['loss']:.0f}%", 0.99, 5)
-                parts.append(f"partita {m['rx_pps']:.0f}/{m['tx_pps']:.0f} pps "
+                    gap_txt += " " + color(m["loss"], f"{T('persi', 'lost')} {m['loss']:.0f}%",
+                                           0.99, 5)
+                parts.append(f"{T('partita', 'match')} {m['rx_pps']:.0f}/{m['tx_pps']:.0f} pps "
                              f"{gap_txt} (max {fmt(m['max_gap'], 'ms')})")
                 worst["gaps"] += m["gaps"]
                 if "srv" in res and res["srv"]["sent"]:
                     parts.append(fmt_ping("server", res["srv"], 60, 120))
             elif sniffer:
-                parts.append(f"{DIM}nessuna partita{RESET}")
+                parts.append(f"{DIM}{T('nessuna partita', 'no match')}{RESET}")
 
             gwr, net = res.get("gw"), res["net"]
             srv = res.get("srv") if m else None
@@ -1022,7 +1136,7 @@ def main():
                 parts.append((RED if level == BAD else YELLOW) + reason + RESET)
             print(" | ".join(parts))
             writer.writerow(dict(zip(CSV_FIELDS, [
-                now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S"), level, reason,
+                now.strftime(T("%d/%m/%Y", "%Y-%m-%d")), now.strftime("%H:%M:%S"), level, reason,
                 wi.get("signal", ""), wi.get("rssi", ""), wi.get("band", ""),
                 wi.get("channel", ""),
                 num(gwr and gwr["avg"], 1), num(gwr and gwr["jitter"], 1),
@@ -1032,7 +1146,8 @@ def main():
                 num(m and m["rx_pps"]), num(m and m["tx_pps"]), num(m and m["loss"], 1),
                 m["gaps"] if m else "",
                 num(m and m["max_gap"]),
-                "non risponde al ping" if srv and srv["no_icmp"] else num(srv and srv["avg"]),
+                T("non risponde al ping", "no ping reply") if srv and srv["no_icmp"]
+                else num(srv and srv["avg"]),
             ])))
             f.flush()
     except KeyboardInterrupt:
@@ -1045,7 +1160,7 @@ def main():
             sniffer.stop()
         f.close()
 
-    print(f"\n{CYAN}Riepilogo sessione{RESET}")
+    print(f"\n{CYAN}{T('Riepilogo sessione', 'Session summary')}{RESET}")
     for k, t in targets.items():
         if not t.all_sent:
             continue
@@ -1053,41 +1168,47 @@ def main():
         if t.all_rtts:
             srt = sorted(t.all_rtts)
             p95 = srt[min(len(srt) - 1, int(len(srt) * 0.95))]
-            print(f"  {t.name:9s} media {statistics.fmean(srt):.0f} ms  p95 {p95:.0f} ms  "
-                  f"max {srt[-1]:.0f} ms  perdita {loss:.1f}% ({t.all_sent} ping)")
+            print(f"  {t.name:9s} {T('media', 'avg')} {statistics.fmean(srt):.0f} ms  "
+                  f"p95 {p95:.0f} ms  max {srt[-1]:.0f} ms  {T('perdita', 'loss')} {loss:.1f}% "
+                  f"({t.all_sent} ping)")
         else:
-            print(f"  {t.name:9s} nessuna risposta ({t.all_sent} ping)")
+            print(f"  {t.name:9s} {T('nessuna risposta', 'no reply')} ({t.all_sent} ping)")
     if worst["signal_min"] is not None:
-        print(f"  segnale Wi-Fi minimo: {worst['signal_min']}%")
+        print(f"  {T('segnale Wi-Fi minimo', 'lowest Wi-Fi signal')}: {worst['signal_min']}%")
     tot = sum(verdicts.values())
     if tot:
-        print("  andamento: " + ", ".join(
+        print(f"  {T('andamento', 'timeline')}: " + ", ".join(
             f"{lv} {100 * verdicts[lv] / tot:.0f}%" for lv in (OK, WARN, BAD)))
     if sniffer:
-        print(f"  scatti in partita, pause (> {GAP_MS} ms): {worst['gaps']}")
-    print("\nCome leggerlo:")
-    print("  - router con jitter o perdita alti  -> problema del Wi-Fi di casa "
-          "(distanza, interferenze, 2.4 GHz)")
-    print("  - router ok ma internet male        -> problema della linea / provider")
-    print("  - tutto ok ma molti scatti in partita -> server o avversario lontani/instabili")
+        print(f"  {T('scatti in partita, pause', 'match stutters, pauses')} (> {GAP_MS} ms): "
+              f"{worst['gaps']}")
+    print(T("""
+Come leggerlo:
+  - router con jitter o perdita alti  -> problema del Wi-Fi di casa (distanza, interferenze, 2.4 GHz)
+  - router ok ma internet male        -> problema della linea / provider
+  - tutto ok ma molti scatti in partita -> server o avversario lontani/instabili""", """
+How to read it:
+  - router with high jitter or loss   -> home Wi-Fi problem (distance, interference, 2.4 GHz)
+  - router fine but internet bad      -> line / ISP problem
+  - all fine but many match stutters  -> server or opponent far away / unstable"""))
     xlsx = make_xlsx(csv_path, announcer.matches if announcer else None)
     hist = append_history(announcer.matches if announcer else None,
                           os.path.dirname(os.path.abspath(csv_path)))
     if hist:
-        print(f"{GREEN}Storico partite aggiornato: {hist}{RESET}")
+        print(f"{GREEN}{T('Storico partite aggiornato:', 'Match history updated:')} {hist}{RESET}")
     if xlsx:
         try:
             os.remove(csv_path)  # il CSV serviva solo come salvataggio durante la sessione
         except OSError:
             pass
-        print(f"{GREEN}Excel salvato in {os.path.abspath(xlsx)}{RESET}")
+        print(f"{GREEN}{T('Excel salvato in', 'Excel saved to')} {os.path.abspath(xlsx)}{RESET}")
     elif sum(verdicts.values()) == 0:
         try:
             os.remove(csv_path)  # sessione troppo breve: nessun dato da salvare
         except OSError:
             pass
     else:
-        print(f"Dati salvati in {os.path.abspath(csv_path)}")
+        print(f"{T('Dati salvati in', 'Data saved to')} {os.path.abspath(csv_path)}")
 
 
 if __name__ == "__main__":
@@ -1101,7 +1222,7 @@ if __name__ == "__main__":
             traceback.print_exc()
         finally:
             try:
-                input("\nPremi Invio per chiudere...")
+                input(T("\nPremi Invio per chiudere...", "\nPress Enter to close..."))
             except (EOFError, KeyboardInterrupt):
                 pass
     else:

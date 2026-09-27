@@ -3,6 +3,7 @@
 [English](README.md) | **Italiano**
 
 Script Python per Windows che controlla la connessione mentre giochi a eFootball via Wi-Fi.
+Il programma parla **italiano o inglese**: segue la lingua di Windows, oppure la scegli con `--lang it` / `--lang en`.
 A fine sessione salva tutto in un **file Excel colorato**. Con `--sniff` ti avvisa anche con un suono, prima del calcio d'inizio, se la partita avrà una connessione buona o scarsa.
 
 ## Cosa misura
@@ -102,6 +103,7 @@ python efootball_monitor.py --excel efootball_log_20260927_214045.csv
 |---|---|
 | `--sniff` | analizza la partita e dà l'avviso prima del calcio d'inizio (serve l'amministratore) |
 | `--muto` | nessun suono quando viene trovata una partita |
+| `--lang it` / `--lang en` | sceglie la lingua (default: quella di Windows) |
 | `--window 2` | una riga ogni 2 secondi invece di 5 |
 | `--gateway 192.168.1.1` | indica tu l'IP del router, se non viene trovato da solo |
 | `--internet 8.8.8.8` | pinga un altro host internet |

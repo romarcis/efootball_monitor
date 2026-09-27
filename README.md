@@ -5,7 +5,7 @@
 A Python script for Windows that monitors your connection while you play eFootball over Wi-Fi.
 At the end of each session it saves everything to a **color-coded Excel file**. With `--sniff` it also beeps before kick-off to tell you whether the match connection will be good or bad.
 
-> The program's messages and Excel column names are currently in Italian.
+The program speaks **English or Italian**: it follows your Windows language, or you can pick one with `--lang en` / `--lang it`.
 
 ## What it measures
 
@@ -57,7 +57,7 @@ Without `--sniff` (and without administrator rights) it still works, but only me
 
 As soon as the game connects to the match server, within about 1 second the PC beeps and prints a line like:
 
-`>>> PARTITA IN ARRIVO (0.1 s)  server dedicato  34.154.0.13:5735  Milano, Italia  ping 8 ms -> connessione BUONA`
+`>>> MATCH INCOMING (0.1 s)  dedicated server  34.154.0.13:5735  Milan, Italy  ping 8 ms -> connection GOOD`
 
 - **1 high beep** = good connection
 - **2 beeps** = so-so, or not measurable
@@ -67,18 +67,18 @@ As soon as the game connects to the match server, within about 1 second the PC b
 **Dedicated server** means the match goes through a server (for example Google Cloud in Milan). In that case the opponent's IP is not visible, so the country shown is the server's.
 **P2P** means you are connected directly to the opponent, so the country is theirs.
 
-The country comes from the free ip-api.com service. Discord or other voice calls can trigger false alerts. Add `--muto` to turn the sound off.
+The country comes from the free ip-api.com service. Discord or other voice calls can trigger false alerts. Add `--mute` to turn the sound off.
 
 ## Excel files
 
 When you press **Ctrl+C** the script creates two things in its folder.
 
 **1. The session file**, for example `efootball_log_20260927_214045.xlsx`, with three sheets:
-- **Riepilogo** (summary): what percentage of the time the connection was OK, ATTENZIONE (warning) or PROBLEMA (problem), session averages and the most frequent problems.
-- **Partite** (matches): matches found in this session, with server, country and ping.
-- **Andamento** (timeline): one row every 5 seconds. The **Giudizio** (verdict) and **Cosa non va** (what's wrong) columns explain in words what was happening. Every number is color-coded and filters are already on: filter Giudizio to `PROBLEMA` to jump to the worst moments.
+- **Summary**: what percentage of the time the connection was OK, WARNING or PROBLEM, session averages and the most frequent problems.
+- **Matches**: matches found in this session, with server, country, ping and report card.
+- **Timeline**: one row every 5 seconds. The **Verdict** and **What's wrong** columns explain in words what was happening (for example "unstable Wi-Fi, router ping swings by 12 ms"). Every number is color-coded and filters are already on: filter Verdict to `PROBLEM` to jump to the worst moments.
 
-**2. The history file `efootball_match_history.xlsx`**, a single file to which every session appends its matches. Besides server, country and ping at kick-off, each match gets a **report card**: duration, average ping during the match, stutters, longest pause, estimated packet loss and an overall verdict (OK / ATTENZIONE / PROBLEMA). Over time it shows which servers and countries really give you lag. Keep it **closed** when you press Ctrl+C, otherwise it can't be updated.
+**2. The history file `efootball_match_history.xlsx`**, a single file to which every session appends its matches. Besides server, country and ping at kick-off, each match gets a **report card**: duration, average ping during the match, stutters, longest pause, estimated packet loss and an overall verdict (OK / WARNING / PROBLEM). Over time it shows which servers and countries really give you lag. Keep it **closed** when you press Ctrl+C, otherwise it can't be updated.
 
 
 **If you close the window instead of pressing Ctrl+C**, no Excel file is created. A backup `.csv` with the same name stays in the folder, and you can convert it:
@@ -101,7 +101,8 @@ python efootball_monitor.py --excel efootball_log_20260927_214045.csv
 | Option | What it does |
 |---|---|
 | `--sniff` | analyses the match and gives the pre-kick-off alert (needs administrator) |
-| `--muto` | no sound when a match is found |
+| `--mute` | no sound when a match is found |
+| `--lang en` / `--lang it` | choose the language (default: your Windows language) |
 | `--window 2` | one line every 2 seconds instead of 5 |
 | `--gateway 192.168.1.1` | set the router IP yourself if it isn't detected |
 | `--internet 8.8.8.8` | ping a different internet host |
