@@ -311,6 +311,8 @@ class MatchSniffer:
         self.ports = {}
         self.last_rx = {}
         self.gaps = defaultdict(list)
+        self.win_first = {}                 # primo pacchetto ricevuto nella finestra
+        self.rates = defaultdict(lambda: deque(maxlen=120))  # pacchetti/s osservati
         self.current = None
         self.sniffer = AsyncSniffer(filter=f"udp and host {my_ip}", prn=self._on_pkt,
                                     store=False, iface=iface)
@@ -333,6 +335,7 @@ class MatchSniffer:
                 if last is not None:
                     self.gaps[remote].append((now - last) * 1000)
                 self.last_rx[remote] = now
+                self.win_first.setdefault(remote, now)
                 if self.on_new_remote and not ipaddress.ip_address(remote).is_private:
                     self._check_new(remote, rport, now)
             elif ip.src == self.my_ip:
@@ -359,6 +362,8 @@ class MatchSniffer:
         with self.lock:
             rx, tx, gaps = self.rx, self.tx, self.gaps
             self.rx, self.tx, self.gaps = defaultdict(int), defaultdict(int), defaultdict(list)
+            first, self.win_first = self.win_first, {}
+            last = dict(self.last_rx)
             ports = dict(self.ports)
         candidates = [(n, r) for r, n in rx.items()
                       if not ipaddress.ip_address(r).is_private and n / seconds >= self.min_pps]
@@ -369,12 +374,31 @@ class MatchSniffer:
         new = remote != self.current
         self.current = remote
         g = gaps.get(remote, [])
+        n = rx[remote]
         return {
             "ip": remote, "port": ports.get(remote), "new": new,
-            "rx_pps": rx[remote] / seconds, "tx_pps": tx.get(remote, 0) / seconds,
+            "rx_pps": n / seconds, "tx_pps": tx.get(remote, 0) / seconds,
             "max_gap": max(g) if g else None,
             "gaps": sum(1 for x in g if x > GAP_MS),
+            "loss": self._estimate_loss(remote, n, first.get(remote), last.get(remote)),
+            "rx": n,
         }
+
+    def _estimate_loss(self, remote, n, t_first, t_last):
+        """Stima dei pacchetti persi server -> te. Il server manda a ritmo fisso
+        (circa 55 al secondo): il ritmo "pieno" e' quello delle finestre migliori,
+        e quello che manca rispetto al tempo in cui la partita era attiva e' perso.
+        Contare solo tra primo e ultimo pacchetto evita falsi allarmi a inizio/fine partita."""
+        if t_first is None or t_last is None or n < 10:
+            return None
+        span = t_last - t_first
+        if span < 0.5:
+            return None
+        rates = self.rates[remote]
+        rates.append((n - 1) / span)
+        nominal = sorted(rates)[int(len(rates) * 0.9)] if len(rates) >= 3 else max(rates)
+        expected = span * nominal + 1
+        return max(0.0, 100.0 * (1 - n / expected))
 
     def stop(self):
         try:
@@ -420,6 +444,8 @@ class MatchAnnouncer:
     def __init__(self, ping_fn, beep=True):
         self.ping_fn, self.beep = ping_fn, beep
         self.matches = []   # righe per il foglio "Partite" dell'Excel
+        self.latest = {}    # ip -> riga dell'ultima partita con quel server
+        self.info = {}      # ip -> (tipo, dove, provider, altra nazione) gia' noti
         self.home = {}
         threading.Thread(target=self._load_home, daemon=True).start()
 
@@ -486,10 +512,52 @@ class MatchAnnouncer:
                     winsound.Beep(500, 700)
             except Exception:
                 pass
-        self.matches.append([now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S"),
-                             f"{ip}:{port}", kind, where, geo.get("isp", ""),
-                             "SI" if abroad else ("no" if geo else "?"),
-                             None if ping is None else round(ping), verdict])
+        self.latest[ip] = rec = [now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S"),
+                                 f"{ip}:{port}", kind, where, geo.get("isp", ""),
+                                 "SI" if abroad else ("no" if geo else "?"),
+                                 None if ping is None else round(ping), verdict]
+        self.info[ip] = tuple(rec[3:7])
+        self.matches.append(rec)
+
+    def record_for(self, ip, port):
+        """Riga della partita in corso con questo server (creata se l'avviso e' mancato)."""
+        rec = self.latest.get(ip)
+        if rec is None:
+            now = dt.datetime.now()
+            known = self.info.get(ip, ("?", "?", "", "?"))  # stesso server gia' visto
+            rec = self.latest[ip] = [now.strftime("%d/%m/%Y"), now.strftime("%H:%M:%S"),
+                                     f"{ip}:{port}", *known, None, "NON MISURABILE"]
+            self.matches.append(rec)
+        return rec
+
+
+class MatchReport:
+    """Accumula le finestre di una partita e alla fine compila la sua pagella."""
+
+    def __init__(self, record):
+        self.record, self.windows = record, 0
+        self.pings, self.losses, self.gaps, self.max_gap = [], [], 0, 0.0
+
+    def add(self, m, srv):
+        self.windows += 1
+        self.gaps += m["gaps"]
+        self.max_gap = max(self.max_gap, m["max_gap"] or 0)
+        if m["loss"] is not None:
+            self.losses.append(m["loss"])
+        if srv and srv["avg"] is not None:
+            self.pings.append(srv["avg"])
+
+    def finish(self, window_s):
+        ping = statistics.fmean(self.pings) if self.pings else None
+        loss = statistics.fmean(self.losses) if self.losses else None
+        bad = (loss or 0) >= 3 or self.gaps >= 10 or (ping or 0) >= 100
+        warn = (loss or 0) >= 0.5 or self.gaps >= 3 or (ping or 0) >= 60
+        verdict = BAD if bad else WARN if warn else OK
+        self.record[9:] = [round(self.windows * window_s / 60, 1),
+                           None if ping is None else round(ping),
+                           self.gaps, round(self.max_gap) or None,
+                           None if loss is None else round(loss, 1), verdict]
+        return verdict, ping, loss
 
 
 def _rdns(ip):
@@ -509,7 +577,8 @@ CSV_FIELDS = [
     "Ping internet (ms)", "Ping internet peggiore (ms)", "Sbalzi ping internet (ms)",
     "Pacchetti persi internet (%)",
     "Server partita", "Pacchetti partita ricevuti al secondo",
-    "Pacchetti partita inviati al secondo", "Scatti in partita",
+    "Pacchetti partita inviati al secondo", "Pacchetti persi in partita (%)",
+    "Scatti in partita",
     "Pausa piu lunga in partita (ms)", "Ping server partita (ms)",
 ]
 
@@ -547,6 +616,7 @@ def diagnose(wi, gwr, net, m, srv, roamed):
         check(net["avg"], 50, 100, "ping internet alto ({v:.0f} ms)")
     if m:
         check(m["gaps"], 1, 3, "{v} scatti in partita (pause oltre 150 ms)")
+        check(m["loss"], 1, 5, "persi {v:.0f}% dei pacchetti dal server")
     if srv and not srv["no_icmp"]:
         check(srv["avg"], 70, 120, "server della partita lontano ({v:.0f} ms)")
 
@@ -590,6 +660,7 @@ XLSX_THRESHOLDS = {
     "Ping internet peggiore (ms)": (100, 200, True),
     "Sbalzi ping internet (ms)": (8, 20, True),
     "Pacchetti persi internet (%)": (0.1, 2, True),
+    "Pacchetti persi in partita (%)": (1, 5, True),
     "Scatti in partita": (1, 3, True),
     "Pausa piu lunga in partita (ms)": (150, 300, True),
     "Ping server partita (ms)": (70, 120, True),
@@ -598,7 +669,41 @@ XLSX_THRESHOLDS = {
 
 HISTORY_FILE = "efootball_match_history.xlsx"
 HISTORY_HEADER = ["Data", "Ora", "Server", "Tipo", "Dove", "Provider",
-                  "Altra nazione", "Ping (ms)", "Connessione"]
+                  "Altra nazione", "Ping iniziale (ms)", "Connessione all'avvio",
+                  "Durata (min)", "Ping medio in partita (ms)", "Scatti", "Pausa max (ms)",
+                  "Pacchetti persi (%)", "Pagella partita"]
+_MATCH_WIDTHS = (11, 9, 22, 28, 24, 26, 13, 12, 16, 10, 14, 9, 11, 12, 16)
+_VERDICT_COLORS = {"BUONA": ("C6EFCE", "006100"), "COSI' COSI'": ("FFEB9C", "9C5700"),
+                   "NON MISURABILE": ("FFEB9C", "9C5700"), "SCARSA": ("FFC7CE", "9C0006"),
+                   OK: ("C6EFCE", "006100"), WARN: ("FFEB9C", "9C5700"),
+                   BAD: ("FFC7CE", "9C0006")}
+
+
+def write_match_rows(ws, matches, new_sheet):
+    """Scrive (o aggiunge) le righe delle partite con intestazione e colori."""
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    if new_sheet or ws.max_row < 1 or ws.cell(1, 1).value != "Data" \
+            or ws.max_column < len(HISTORY_HEADER):
+        for i, h in enumerate(HISTORY_HEADER, 1):   # crea o aggiorna l'intestazione
+            c = ws.cell(1, i, h)
+            c.fill = PatternFill("solid", start_color="1F4E78")
+            c.font = Font(bold=True, color="FFFFFF")
+        for i, w in enumerate(_MATCH_WIDTHS, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        ws.freeze_panes = "A2"
+    for m in matches:
+        ws.append(m)
+        r = ws.max_row
+        for col in (9, 15):
+            if col <= len(m) and m[col - 1] in _VERDICT_COLORS:
+                bg, fg = _VERDICT_COLORS[m[col - 1]]
+                ws.cell(r, col).fill = PatternFill("solid", start_color=bg)
+                ws.cell(r, col).font = Font(color=fg, bold=(col == 15))
+        if m[6] == "SI":
+            ws.cell(r, 7).fill = PatternFill("solid", start_color="FFC7CE")
+            ws.cell(r, 7).font = Font(color="9C0006")
+    ws.auto_filter.ref = ws.dimensions
 
 
 def append_history(matches, folder):
@@ -607,37 +712,16 @@ def append_history(matches, folder):
         return None
     try:
         from openpyxl import Workbook, load_workbook
-        from openpyxl.styles import Font, PatternFill
     except ImportError:
         return None
     path = os.path.join(folder, HISTORY_FILE)
     if os.path.exists(path):
         wb = load_workbook(path)
-        ws = wb.active
+        write_match_rows(wb.active, matches, new_sheet=False)
     else:
         wb = Workbook()
-        ws = wb.active
-        ws.title = "Partite"
-        ws.append(HISTORY_HEADER)
-        for c in ws[1]:
-            c.fill = PatternFill("solid", start_color="1F4E78")
-            c.font = Font(bold=True, color="FFFFFF")
-        for col, w in zip("ABCDEFGHI", (11, 9, 22, 28, 24, 26, 13, 10, 16)):
-            ws.column_dimensions[col].width = w
-        ws.freeze_panes = "A2"
-    colors = {"BUONA": ("C6EFCE", "006100"), "COSI' COSI'": ("FFEB9C", "9C5700"),
-              "NON MISURABILE": ("FFEB9C", "9C5700"), "SCARSA": ("FFC7CE", "9C0006")}
-    for m in matches:
-        ws.append(m)
-        if m[8] in colors:
-            bg, fg = colors[m[8]]
-            cell = ws.cell(ws.max_row, 9)
-            cell.fill, cell.font = PatternFill("solid", start_color=bg), Font(color=fg)
-        if m[6] == "SI":
-            cell = ws.cell(ws.max_row, 7)
-            cell.fill = PatternFill("solid", start_color="FFC7CE")
-            cell.font = Font(color="9C0006")
-    ws.auto_filter.ref = ws.dimensions
+        wb.active.title = "Partite"
+        write_match_rows(wb.active, matches, new_sheet=True)
     try:
         wb.save(path)
     except PermissionError:
@@ -762,23 +846,7 @@ def make_xlsx(csv_path, matches=None):
             rs.append([p, n])
 
     if matches:
-        ps = wb.create_sheet("Partite", 1)
-        ps.append(["Data", "Ora", "Server", "Tipo", "Dove", "Provider",
-                   "Altra nazione", "Ping (ms)", "Connessione"])
-        for c in ps[1]:
-            c.fill, c.font = fills["h"], Font(bold=True, color="FFFFFF")
-        verdict_key = {"BUONA": "g", "COSI' COSI'": "y", "NON MISURABILE": "y", "SCARSA": "r"}
-        for m in matches:
-            ps.append(m)
-            k = verdict_key.get(m[8])
-            if k:
-                cell = ps.cell(ps.max_row, 9)
-                cell.fill, cell.font = fills[k], fonts[k]
-            if m[6] == "SI":
-                cell = ps.cell(ps.max_row, 7)
-                cell.fill, cell.font = fills["r"], fonts["r"]
-        for col, w in zip("ABCDEFGHI", (11, 9, 22, 28, 24, 26, 13, 10, 16)):
-            ps.column_dimensions[col].width = w
+        write_match_rows(wb.create_sheet("Partite", 1), matches, new_sheet=True)
 
     xlsx_path = os.path.splitext(csv_path)[0] + ".xlsx"
     try:
@@ -875,6 +943,21 @@ def main():
     last_bssid = wi.get("bssid")
     worst = {"gw_jitter": 0.0, "net_max": 0.0, "gaps": 0, "signal_min": None}
     verdicts = defaultdict(int)
+    report = None  # pagella della partita in corso
+
+    def close_report():
+        nonlocal report
+        if report:
+            verdict, ping, loss = report.finish(args.window)
+            col = RED if verdict == BAD else YELLOW if verdict == WARN else GREEN
+            print(f"{col}{dt.datetime.now():%H:%M:%S} Fine partita: pagella {verdict}  "
+                  f"ping {fmt(ping, ' ms')}  scatti {report.gaps}  "
+                  f"persi {fmt(loss, '%', 1)}{RESET}")
+            if announcer:
+                ip = report.record[2].split(":")[0]
+                if announcer.latest.get(ip) is report.record:
+                    del announcer.latest[ip]  # la prossima partita avra' una riga nuova
+            report = None
     try:
         while True:
             time.sleep(args.window)
@@ -913,6 +996,8 @@ def main():
             worst["net_max"] = max(worst["net_max"], res["net"]["max"] or 0)
             if m:
                 gap_txt = color(m["gaps"], f"{m['gaps']} scatti", 0, 3)
+                if m["loss"] is not None:
+                    gap_txt += " " + color(m["loss"], f"persi {m['loss']:.0f}%", 0.99, 5)
                 parts.append(f"partita {m['rx_pps']:.0f}/{m['tx_pps']:.0f} pps "
                              f"{gap_txt} (max {fmt(m['max_gap'], 'ms')})")
                 worst["gaps"] += m["gaps"]
@@ -925,6 +1010,14 @@ def main():
             srv = res.get("srv") if m else None
             level, reason = diagnose(wi, gwr, net, m, srv, roamed)
             verdicts[level] += 1
+            if announcer:
+                rec = announcer.record_for(m["ip"], m["port"]) if m else None
+                if report and (rec is None or rec is not report.record):
+                    close_report()
+                if rec is not None:
+                    if report is None:
+                        report = MatchReport(rec)
+                    report.add(m, srv)
             if level != OK:
                 parts.append((RED if level == BAD else YELLOW) + reason + RESET)
             print(" | ".join(parts))
@@ -936,7 +1029,8 @@ def main():
                 num(gwr and gwr["loss"]),
                 num(net["avg"]), num(net["max"]), num(net["jitter"], 1), num(net["loss"]),
                 f"{m['ip']}:{m['port']}" if m else "",
-                num(m and m["rx_pps"]), num(m and m["tx_pps"]), m["gaps"] if m else "",
+                num(m and m["rx_pps"]), num(m and m["tx_pps"]), num(m and m["loss"], 1),
+                m["gaps"] if m else "",
                 num(m and m["max_gap"]),
                 "non risponde al ping" if srv and srv["no_icmp"] else num(srv and srv["avg"]),
             ])))
@@ -944,6 +1038,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        close_report()
         for t in targets.values():
             t.stop()
         if sniffer:

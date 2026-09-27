@@ -12,7 +12,7 @@ A fine sessione salva tutto in un **file Excel colorato**. Con `--sniff` ti avvi
 | **router** (ping, sbalzi, pacchetti persi) | qualità del Wi-Fi tra PC e router: deve stare sotto 5 ms, con pochi sbalzi e 0% di pacchetti persi |
 | **internet** (default 1.1.1.1) | qualità della linea del provider |
 | **Wi-Fi** (segnale %, dBm, banda, canale) | potenza del segnale, con avvisi se sei sulla banda 2.4 GHz o se il PC cambia access point |
-| **partita** (solo con `--sniff`) | server o avversario, nazione, ping, pacchetti al secondo e "scatti" (pause oltre 150 ms nei dati in arrivo = lag) |
+| **partita** (solo con `--sniff`) | server o avversario, nazione, ping, pacchetti al secondo, pacchetti persi stimati e "scatti" (pause oltre 150 ms nei dati in arrivo = lag) |
 
 Verde = buono, giallo = al limite, rosso = problema.
 
@@ -26,7 +26,9 @@ Verde = buono, giallo = al limite, rosso = problema.
 
 ## Versione .exe (per chi non ha Python)
 
-Puoi trasformare lo script in un programma unico, `eFootballMonitor.exe`, da passare a chi non ha Python.
+**Il modo più semplice:** scarica `eFootballMonitor.exe` dalla pagina [Releases](../../releases). Lo crea GitHub in automatico da questo codice.
+
+In alternativa puoi crearlo tu:
 
 1. Sul **tuo** PC, dove Python c'è già, metti `build_exe.bat` nella stessa cartella dello script e fai **doppio clic**.
 2. Dopo un paio di minuti trovi il programma in `dist\eFootballMonitor.exe`.
@@ -60,6 +62,8 @@ Appena il gioco si collega al server della partita, in circa 1 secondo il PC suo
 - **3 bip gravi** = scarsa
 - **+ 1 bip lungo** = l'avversario (o il server) è in **un'altra nazione**
 
+A fine partita il prompt scrive anche la pagella della partita.
+
 **Server dedicato** vuol dire che la partita passa da un server (per esempio Google Cloud a Milano). In questo caso l'IP dell'avversario non si vede, quindi la nazione indicata è quella del server.
 **P2P** vuol dire che sei collegato direttamente all'avversario, quindi la nazione è la sua.
 
@@ -74,7 +78,7 @@ Quando premi **Ctrl+C** lo script crea due cose nella cartella dello script.
 - **Partite**: le partite trovate in questa sessione, con server, nazione e ping.
 - **Andamento**: una riga ogni 5 secondi. Le colonne **Giudizio** e **Cosa non va** spiegano a parole cosa succedeva (per esempio "Wi-Fi instabile, il ping al router balla di 12 ms"). Ogni numero è colorato e i filtri sono già attivi: nella colonna Giudizio tieni solo `PROBLEMA` per vedere subito i momenti peggiori.
 
-**2. Lo storico `efootball_match_history.xlsx`**, un file unico a cui ogni sessione aggiunge le sue partite in fondo. Serve a vedere nel tempo quali server e quali nazioni ti capitano e come va la connessione. Tienilo **chiuso** quando premi Ctrl+C, altrimenti non si può aggiornare.
+**2. Lo storico `efootball_match_history.xlsx`**, un file unico a cui ogni sessione aggiunge le sue partite in fondo. Oltre a server, nazione e ping all'avvio, ogni partita ha una **pagella**: durata, ping medio durante la partita, scatti, pausa più lunga, pacchetti persi stimati e un giudizio finale (OK / ATTENZIONE / PROBLEMA). Col tempo ti fa vedere quali server e quali nazioni ti danno davvero lag. Tienilo **chiuso** quando premi Ctrl+C, altrimenti non si può aggiornare.
 
 
 **Se chiudi la finestra invece di premere Ctrl+C**, l'Excel non viene creato. Nella cartella resta un file `.csv` di appoggio con lo stesso nome, e puoi trasformarlo in Excel così:
@@ -89,6 +93,7 @@ python efootball_monitor.py --excel efootball_log_20260927_214045.csv
 - **Router ok ma internet male**: il problema è la linea o il provider.
 - **Tutto ok ma tanti "scatti" in partita**: il server o l'avversario è lontano o instabile. Non è colpa tua.
 - **Tutto verde ma senti ritardo nei comandi**: di solito dipende dall'avversario lontano, perché il gioco rallenta entrambi per tenervi sincronizzati. Può dipendere anche dal PC: prova a disattivare il V-Sync, a usare un controller col cavo e a mettere lo schermo in "modalità gioco".
+- **Pacchetti persi in partita**: il server manda a ritmo fisso (circa 55 pacchetti al secondo). Lo script prende come riferimento il ritmo dei momenti migliori e conta quelli che mancano. È una stima: se la perdita è costante per tutta la partita viene sottostimata.
 - **Server "no ping"**: molti server di gioco non rispondono al ping, è normale. In quel caso guarda gli "scatti".
 
 ## Opzioni

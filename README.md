@@ -14,7 +14,7 @@ At the end of each session it saves everything to a **color-coded Excel file**. 
 | **router** (ping, jitter, packet loss) | Wi-Fi quality between PC and router: should stay under 5 ms, with low jitter and 0% loss |
 | **internet** (default 1.1.1.1) | quality of your ISP line |
 | **Wi-Fi** (signal %, dBm, band, channel) | signal strength, with warnings if you are on 2.4 GHz or the PC switches access point |
-| **match** (only with `--sniff`) | server or opponent, country, ping, packets per second and "stutters" (gaps over 150 ms in incoming data = lag) |
+| **match** (only with `--sniff`) | server or opponent, country, ping, packets per second, estimated packet loss from the server and "stutters" (gaps over 150 ms in incoming data = lag) |
 
 Green = good, yellow = borderline, red = problem.
 
@@ -28,7 +28,9 @@ Green = good, yellow = borderline, red = problem.
 
 ## .exe version (for people without Python)
 
-You can turn the script into a single program, `eFootballMonitor.exe`, to share with people who don't have Python.
+**Easiest:** download `eFootballMonitor.exe` from the [Releases](../../releases) page. It is built automatically by GitHub from this code.
+
+You can also build it yourself:
 
 1. On **your** PC, where Python is installed, put `build_exe.bat` in the same folder as the script and **double-click** it.
 2. After a couple of minutes the program is in `dist\eFootballMonitor.exe`.
@@ -76,7 +78,7 @@ When you press **Ctrl+C** the script creates two things in its folder.
 - **Partite** (matches): matches found in this session, with server, country and ping.
 - **Andamento** (timeline): one row every 5 seconds. The **Giudizio** (verdict) and **Cosa non va** (what's wrong) columns explain in words what was happening. Every number is color-coded and filters are already on: filter Giudizio to `PROBLEMA` to jump to the worst moments.
 
-**2. The history file `efootball_match_history.xlsx`**, a single file to which every session appends its matches. Use it to see over time which servers and countries you get and how the connection behaves. Keep it **closed** when you press Ctrl+C, otherwise it can't be updated.
+**2. The history file `efootball_match_history.xlsx`**, a single file to which every session appends its matches. Besides server, country and ping at kick-off, each match gets a **report card**: duration, average ping during the match, stutters, longest pause, estimated packet loss and an overall verdict (OK / ATTENZIONE / PROBLEMA). Over time it shows which servers and countries really give you lag. Keep it **closed** when you press Ctrl+C, otherwise it can't be updated.
 
 
 **If you close the window instead of pressing Ctrl+C**, no Excel file is created. A backup `.csv` with the same name stays in the folder, and you can convert it:
@@ -91,6 +93,7 @@ python efootball_monitor.py --excel efootball_log_20260927_214045.csv
 - **Router fine but internet bad**: the problem is your line or ISP.
 - **Everything fine but many stutters in the match**: the server or the opponent is far away or unstable. Not your fault.
 - **All green but your inputs feel delayed**: usually a distant opponent, because the game slows both players down to keep them in sync. It can also be your PC: try turning off V-Sync, using a wired controller and putting the screen in "game mode".
+- **Packet loss in the match**: the server sends at a steady rate (about 55 packets per second). The script takes the rate of the best moments as reference and counts what is missing. It is an estimate: if the loss is constant for the whole match it will be underestimated.
 - **Server "no ping"**: many game servers don't answer ping, that's normal. Look at the stutters instead.
 
 ## Options
@@ -106,4 +109,4 @@ python efootball_monitor.py --excel efootball_log_20260927_214045.csv
 
 ## How it works
 
-Inspired by [eFootball_Network_Monitor_Tool](https://github.com/SuNingXJBT/eFootball_Network_Monitor_Tool). Pings use the Windows ICMP API, Wi-Fi data comes from `netsh wlan show interfaces`, and match traffic is captured with Npcap + scapy: the remote host sending a steady UDP stream is treated as the match server or opponent.
+Inspired by [eFootball_Network_Monitor_Tool](https://github.com/SuNingXJBT/eFootball_Network_Monitor_Tool). At the end of each match the console prints the match report card. Pings use the Windows ICMP API, Wi-Fi data comes from `netsh wlan show interfaces`, and match traffic is captured with Npcap + scapy: the remote host sending a steady UDP stream is treated as the match server or opponent.
