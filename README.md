@@ -78,7 +78,6 @@ When you press **Ctrl+C** the script creates two things in its folder.
 
 **2. The history file `efootball_match_history.xlsx`**, a single file to which every session appends its matches. Use it to see over time which servers and countries you get and how the connection behaves. Keep it **closed** when you press Ctrl+C, otherwise it can't be updated.
 
-`sample_fake_data.xlsx` shows what a session file looks like (the data is made up).
 
 **If you close the window instead of pressing Ctrl+C**, no Excel file is created. A backup `.csv` with the same name stays in the folder, and you can convert it:
 
