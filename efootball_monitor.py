@@ -929,7 +929,8 @@ def make_xlsx(csv_path, matches=None):
         if LEVEL_OF.get(r[2], 0) != 0:
             for p in r[3].split("; "):
                 key = re.sub(r"\(.*?\)", "", p.split(",")[0])  # senza i numeri
-                problems[re.sub(r"^\d+\s*", "", key).strip()] += 1
+                key = re.sub(r"[\d.]+\s*(ms|%)?", "", key)
+                problems[re.sub(r"\s+", " ", key).strip()] += 1
     if problems:
         rs.append([])
         rs.append([T("Problemi piu frequenti", "Most frequent problems"),
@@ -1211,6 +1212,10 @@ How to read it:
   - router with high jitter or loss   -> home Wi-Fi problem (distance, interference, 2.4 GHz)
   - router fine but internet bad      -> line / ISP problem
   - all fine but many match stutters  -> server or opponent far away / unstable"""))
+    if announcer:
+        for rec in announcer.matches:
+            if rec[14] is None:  # avviso scattato ma nessuna partita dopo: matchmaking annullato
+                rec[14] = T("NON GIOCATA", "NOT PLAYED")
     xlsx = make_xlsx(csv_path, announcer.matches if announcer else None)
     hist = append_history(announcer.matches if announcer else None,
                           os.path.dirname(os.path.abspath(csv_path)))
